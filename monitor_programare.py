@@ -49,12 +49,6 @@ def save_json(path, data):
 
 
 def get_sloturi():
-    """
-    Parcurge flow-ul site-ului:
-    1. GET csrf-cookie  -> obține cookie + X-XSRF-TOKEN
-    2. GET init         -> inițializează sesiunea
-    3. GET /api/online/54 -> obține zilele disponibile
-    """
     session = requests.Session()
     session.headers.update(HEADERS)
 
@@ -62,21 +56,20 @@ def get_sloturi():
     try:
         r = session.get(CSRF_URL, timeout=20)
         r.raise_for_status()
-        # token-ul CSRF vine și în cookie XSRF-TOKEN
         xsrf = session.cookies.get("XSRF-TOKEN", "")
         if xsrf:
             session.headers["X-XSRF-TOKEN"] = requests.utils.unquote(xsrf)
     except Exception as e:
         print(f"[WARN] csrf-cookie: {e}")
 
-    # Pas 2: init (cu CNP fake)
+    # Pas 2: init
     try:
         r = session.get(INIT_URL, timeout=20, params={"cnp": CNP_FAKE})
         r.raise_for_status()
     except Exception as e:
         print(f"[WARN] init: {e}")
 
-    # Pas 3: obține zilele disponibile pentru serviciul 54
+    # Pas 3: zilele disponibile
     r = session.get(SERVICE_URL, timeout=20)
     r.raise_for_status()
 
@@ -87,38 +80,33 @@ def get_sloturi():
 
 def parse_sloturi(data):
     """
-    Extrage lista de date disponibile din răspunsul API.
-    Returnează lista de stringuri cu datele găsite.
+    Extrage doar datele cu is_available=True din răspunsul API.
+    Returnează lista de stringuri de forma "7 iunie (luni)".
     """
     if not data:
         return []
 
-    # Încearcă diverse structuri posibile
     sloturi = []
 
-    # Structură directă: listă de date
     if isinstance(data, list):
         for item in data:
-            if isinstance(item, str):
-                sloturi.append(item)
-            elif isinstance(item, dict):
-                for key in ("data", "date", "zi", "day", "disponibil"):
-                    if key in item:
-                        sloturi.append(str(item[key]))
-                        break
-                else:
-                    sloturi.append(json.dumps(item, ensure_ascii=False))
+            if not isinstance(item, dict):
+                continue
+            if not item.get("is_available", False):
+                continue
+            data_localizata = item.get("date_localized", item.get("date", ""))
+            zi_localizata   = item.get("day_localized", "")
+            if zi_localizata:
+                sloturi.append(f"{data_localizata} ({zi_localizata})")
+            else:
+                sloturi.append(data_localizata)
         return sloturi
 
-    # Structură dict cu cheie
     if isinstance(data, dict):
-        for key in ("zile", "date", "days", "sloturi", "disponibile", "data", "items", "results"):
+        for key in ("zile", "date", "days", "sloturi", "disponibile", "items", "results"):
             val = data.get(key)
             if val and isinstance(val, list):
                 return parse_sloturi(val)
-        # fallback: returnează tot ca string dacă are ceva
-        if data:
-            return [json.dumps(data, ensure_ascii=False)]
 
     return []
 
@@ -137,7 +125,7 @@ def send_email(config, subject, plain_body, html_body):
 
 
 def build_email(sloturi_noi, toate_sloturile, now_str):
-    lista_noi = "\n".join(f"  • {s}" for s in sloturi_noi) or "  (sloturi noi detectate)"
+    lista_noi  = "\n".join(f"  • {s}" for s in sloturi_noi) or "  (sloturi noi detectate)"
     lista_toate = "\n".join(f"  • {s}" for s in toate_sloturile) or "  (vezi site-ul)"
 
     plain = f"""Sloturi noi disponibile pentru programare la Primăria Sector 1!
@@ -203,7 +191,6 @@ def main():
     state = load_json(STATE_FILE, {"sloturi": []})
     sloturi_anterioare = set(state.get("sloturi", []))
 
-    # Obține sloturi curente
     try:
         data = get_sloturi()
     except Exception as e:
@@ -211,7 +198,7 @@ def main():
         return
 
     sloturi_curente = parse_sloturi(data)
-    print(f"[INFO] Sloturi găsite: {len(sloturi_curente)}")
+    print(f"[INFO] Sloturi disponibile găsite: {len(sloturi_curente)}")
     for s in sloturi_curente:
         print(f"  • {s}")
 
@@ -223,8 +210,6 @@ def main():
     sloturi_set = set(sloturi_curente)
     sloturi_noi = list(sloturi_set - sloturi_anterioare)
 
-    # Trimite email dacă: există sloturi noi față de ultima verificare,
-    # SAU prima dată când găsim sloturi (starea anterioară era goală)
     if sloturi_noi or (sloturi_curente and not sloturi_anterioare):
         notif_sloturi = sloturi_noi if sloturi_noi else sloturi_curente
         print(f"[INFO] Sloturi noi detectate: {notif_sloturi}")
