@@ -33,7 +33,7 @@ jobs:
 
       - name: Create config.json from secrets
         run: |
-          cat > config.json << 'EOF'
+          cat > config.json << EOF
           {
             "smtp_host": "smtp.gmail.com",
             "smtp_port": 465,
