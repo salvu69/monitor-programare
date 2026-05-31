@@ -1,0 +1,55 @@
+name: Monitor Programare Sector 1
+
+concurrency:
+  group: monitor-programare
+  cancel-in-progress: true
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # la fiecare 15 minute
+  workflow_dispatch: {}       # permite rulare manuală din GitHub
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Bucharest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Create config.json from secrets
+        run: |
+          cat > config.json << 'EOF'
+          {
+            "smtp_host": "smtp.gmail.com",
+            "smtp_port": 465,
+            "sender_email": "${{ secrets.SENDER_EMAIL }}",
+            "sender_app_password": "${{ secrets.SENDER_APP_PASSWORD }}",
+            "recipient_email": "${{ secrets.RECIPIENT_EMAIL }}"
+          }
+          EOF
+
+      - name: Run monitor
+        run: python monitor_programare.py
+
+      - name: Commit updated state
+        run: |
+          git config user.name "monitor-bot"
+          git config user.email "monitor-bot@users.noreply.github.com"
+          git add state_programare.json || true
+          git diff --staged --quiet || git commit -m "Update state programare"
+          git push --force-with-lease
